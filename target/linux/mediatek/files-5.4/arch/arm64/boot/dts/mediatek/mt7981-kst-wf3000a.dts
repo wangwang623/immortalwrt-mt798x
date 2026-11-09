@@ -1,0 +1,270 @@
+// SPDX-License-Identifier: GPL-2.0-or-later OR MIT
+/*
+ * KST WF3000A —— hanwckf / ImmortalWrt 21.02 / Linux 5.4 板级描述
+ *
+ * 硬件定义来源：wangwang623/immortalwrt-mt798x-6.6 的
+ *   target/linux/mediatek/dts/mt7981b-kst-wf3000a.dts（已实机验证可用）。
+ * 语法框架来源：本分支 5.4 的
+ *   mt7981-newland-nl-wr8103.dts（分区/NMBM/LED 风格）
+ *   mt7981-xiaomi-mi-router.dtsi、mt7981-360-t7-base.dtsi（网口拓扑）
+ *
+ * ★★ 为什么不能直接刷 / 直接照抄 NL-WR8103 ★★
+ * 8103 的 gmac1 是 "gmii + phy-handle = <&phy0>"（外接一颗千兆 PHY），
+ * 且 02_network 只把 switch port0/1/2 配成 lan、WAN 走 eth1。
+ * WF3000A 没有这颗外置 PHY，WAN 是 MT7531 的 port3 —— 所以刷 8103 固件
+ * 会出现"无线正常、有线网口不通"。
+ * 本文件按 6.6 已验证 DTS 的拓扑重写：两个 GMAC 都是 2500base-x fixed-link，
+ * mdio-bus 为空（无 phy0），gsw 同时挂 port5 + port6 两个 CPU port，
+ * 端口角色由 02_network 按 "0/1/2=lan, 3=wan" 配置。
+ *
+ * ★ 5.4 与 6.6 的关键差异（这些 6.6 写法一律不要带进来）★
+ *   - 5.4 没有 &wifi / &mdio_bus / &switch 节点，交换机是 gsw (mediatek,mt753x)
+ *   - 5.4 的 NMBM 是独立节点 nmbm_spim_nand { compatible="generic,nmbm"; }
+ *   - 5.4 不读 nvmem-layout / nvmem-cells / mac-address-increment
+ *   - 5.4 的 mtk-snand-ids.c 把 W25N01GV 定义为 SNAND_MEMORG_1G_2K_64
+ *     → OOB 64B，与 U-Boot 写进 NMBM 签名的 spare_size=64 天然相等，
+ *       ★不存在 6.6 的 "NMBM configuration mismatch"，不要加
+ *       mediatek,bmt-mtd-overridden-oobsize ★
+ *
+ * 分区表与 U-Boot expand(114m) 一致：
+ *   nmbm0:1024k(bl2),512k(u-boot-env),2048k(factory),2048k(fip),116736k(ubi)
+ * 标签用大写 "BL2"/"Factory"/"FIP"：5.4 的 02_network 用
+ *   mtd_get_mac_binary Factory 0x4 读 MAC，闭源无线驱动也按 "Factory" 查找。
+ *   （用户实测刷 8103 固件无线正常，已证明该标签在 5.4 可用。）
+ *   不要改成 6.6 的小写 factory，否则 MAC 会退化成随机值。
+ *
+ * MAC（实测）：Factory 0x4 = 48:DA:35:50:70:F7，LAN = -1 (F6)，WAN = -2 (F5)。
+ * 由 02_network 处理，DTS 不绑定。
+ */
+
+/dts-v1/;
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include "mt7981.dtsi"
+
+/ {
+	model = "KST WF3000A (114M UBI layout)";
+	compatible = "kst,wf3000a", "mediatek,mt7981";
+
+	aliases {
+		serial0 = &uart0;
+		led-boot = &status_red_led;
+		led-failsafe = &status_red_led;
+		led-running = &status_green_led;
+		led-upgrade = &status_blue_led;
+	};
+
+	chosen {
+		bootargs = "console=ttyS0,115200n1 loglevel=8 earlycon=uart8250,mmio32,0x11002000";
+	};
+
+	memory {
+		reg = <0 0x40000000 0 0x10000000>;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		status_red_led: led-0 {
+			label = "red:status";
+			gpios = <&pio 10 GPIO_ACTIVE_LOW>;
+		};
+
+		status_green_led: led-1 {
+			label = "green:status";
+			gpios = <&pio 11 GPIO_ACTIVE_LOW>;
+		};
+
+		status_blue_led: led-2 {
+			label = "blue:status";
+			gpios = <&pio 12 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
+		};
+
+		wps {
+			label = "wps";
+			linux,code = <KEY_WPS_BUTTON>;
+			gpios = <&pio 0 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	gsw: gsw@0 {
+		compatible = "mediatek,mt753x";
+		mediatek,ethsys = <&ethsys>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
+
+	nmbm_spim_nand {
+		compatible = "generic,nmbm";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		lower-mtd-device = <&spi_nand>;
+		forced-create;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "BL2";
+				reg = <0x00 0x100000>;
+			};
+
+			partition@100000 {
+				label = "u-boot-env";
+				reg = <0x100000 0x80000>;
+			};
+
+			partition@180000 {
+				label = "Factory";
+				reg = <0x180000 0x200000>;
+			};
+
+			partition@380000 {
+				label = "FIP";
+				reg = <0x380000 0x200000>;
+			};
+
+			partition@580000 {
+				label = "ubi";
+				reg = <0x580000 0x7200000>;
+			};
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&eth {
+	status = "okay";
+
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "2500base-x";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
+
+	/* WF3000A 无外置 PHY：与 6.6 已验证 DTS 一致，用 fixed-link 而非 phy0 */
+	gmac1: mac@1 {
+		compatible = "mediatek,eth-mac";
+		reg = <1>;
+		phy-mode = "2500base-x";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
+
+	mdio: mdio-bus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+	};
+};
+
+&gsw {
+	mediatek,mdio = <&mdio>;
+	mediatek,mdio_master_pinmux = <0>;
+	reset-gpios = <&pio 39 0>;
+	interrupt-parent = <&pio>;
+	interrupts = <38 IRQ_TYPE_LEVEL_HIGH>;
+	status = "okay";
+
+	port5: port@5 {
+		compatible = "mediatek,mt753x-port";
+		reg = <5>;
+		phy-mode = "sgmii";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+		};
+	};
+
+	port6: port@6 {
+		compatible = "mediatek,mt753x-port";
+		mediatek,ssc-on;
+		reg = <6>;
+		phy-mode = "sgmii";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+		};
+	};
+};
+
+&hnat {
+	mtketh-wan = "eth1";
+	mtketh-lan = "eth0";
+	mtketh-max-gmac = <2>;
+	status = "okay";
+};
+
+&spi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_flash_pins>;
+	status = "okay";
+
+	spi_nand: spi_nand@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <52000000>;
+		spi-tx-bus-width = <4>;
+		spi-rx-bus-width = <4>;
+		spi-cal-enable;
+		spi-cal-mode = "read-data";
+		spi-cal-datalen = <7>;
+		spi-cal-data = /bits/ 8 <0x53 0x50 0x49 0x4E 0x41 0x4E 0x44>;
+		spi-cal-addrlen = <5>;
+		spi-cal-addr = /bits/ 32 <0x0 0x0 0x0 0x0 0x0>;
+	};
+};
+
+&pio {
+	spi0_flash_pins: spi0-pins {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+
+		conf-pu {
+			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
+			drive-strength = <MTK_DRIVE_8mA>;
+			bias-pull-up = <MTK_PUPD_SET_R1R0_11>;
+		};
+
+		conf-pd {
+			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
+			drive-strength = <MTK_DRIVE_8mA>;
+			bias-pull-down = <MTK_PUPD_SET_R1R0_11>;
+		};
+	};
+};

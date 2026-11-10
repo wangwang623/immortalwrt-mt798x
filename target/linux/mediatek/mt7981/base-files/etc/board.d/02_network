@@ -52,9 +52,15 @@ mediatek_setup_interfaces()
 			"1:lan:3" "2:lan:2" "3:lan:1" "0:wan" "6t@eth0"
 		;;
 	kst,wf3000a)
-		ucidef_set_interfaces_lan_wan "eth0" "eth1"
+		# 硬件 1WAN+3LAN，机身从左到右：LAN1 LAN2 LAN3 WAN。
+		# 6.6 已验证 DTS 的 label 与 port 编号一一对应（不反序）：
+		#   port0=lan1(最左) port1=lan2 port2=lan3 port3=wan(最右) port6=CPU
+		# 5.4 无 DSA，按 cetron,ct3003 的单 GMAC + VLAN 写法：
+		#   LAN = eth0.1（port0/1/2，VLAN 1）、WAN = eth0.2（port3，VLAN 2）
+		# 不启用 eth1 / port5 —— 双 GMAC 写法在 5.4 SDK 驱动下 WAN「只发不收」。
+		ucidef_set_interfaces_lan_wan "eth0.1" "eth0.2"
 		ucidef_add_switch "switch0" \
-			"0:lan" "1:lan" "2:lan" "3:wan" "6u@eth0" "5u@eth1"
+			"0:lan" "1:lan" "2:lan" "3:wan" "6t@eth0"
 		;;
 	*clt,r30b1* |\
 	h3c,nx30pro |\

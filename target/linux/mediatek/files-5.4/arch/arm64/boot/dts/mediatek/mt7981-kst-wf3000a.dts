@@ -37,8 +37,11 @@
  *    &eth 只声明 gmac0、hnat max-gmac=1、wan=eth0.2 / lan=eth0.1、
  *    02_network 用 "0:lan 1:lan 2:lan 3:wan 6t@eth0"，用 VLAN 1/2 区分
  *    LAN/WAN。port5 节点是 5.4 mt753x 驱动在 VLAN 模式下的标准声明；
- *    ★不写 mediatek,portmap★：驱动 "wllll" 默认把 port0 当 WAN，
- *    会与本机 port3=WAN 冲突，VLAN 全部交给 02_network 配置。
+ *    ★不写 mediatek,portmap★：5.4 驱动内建 4 种映射
+ *    （llllw / wllll / lwlll / lllll）分别把 port4 / port0 / port1 当 WAN 或不设 WAN，
+ *    没有一种对应本机 port3=WAN；属性缺省时 find_mapping() 返回 NULL，
+ *    由 02_network 的 ucidef_add_switch 生成 board.json，preinit 执行
+ *    swconfig「set enable_vlan 1」+「set apply」落实 VLAN 1/2。
  *
  * 分区表与 U-Boot expand(114m) 一致：
  *   nmbm0:1024k(bl2),512k(u-boot-env),2048k(factory),2048k(fip),116736k(ubi)

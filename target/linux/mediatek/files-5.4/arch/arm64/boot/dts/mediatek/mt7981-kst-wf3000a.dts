@@ -2,39 +2,56 @@
 /*
  * KST WF3000A —— hanwckf / ImmortalWrt 21.02 / Linux 5.4 板级描述
  *
- * 硬件定义来源：wangwang623/immortalwrt-mt798x-6.6 的
- *   target/linux/mediatek/dts/mt7981b-kst-wf3000a.dts（已实机验证可用）。
- * 语法框架来源：本分支 5.4 的
- *   mt7981-newland-nl-wr8103.dts（分区/NMBM/LED 风格）
- *   mt7981-xiaomi-mi-router.dtsi、mt7981-360-t7-base.dtsi（网口拓扑）
+ * 【硬件事实来源】wangwang623/immortalwrt-mt798x-6.6 的
+ *   target/linux/mediatek/dts/mt7981b-kst-wf3000a.dts（实机验证有线/无线可用）
+ * 【语法格式来源】本分支 5.4 的 mt7981-newland-nl-wr8103.dts
+ *   （chosen/leds/gpio-keys/gsw/nmbm/spi0/pio 的写法）
+ * 【网口模式来源】本分支 5.4 的 mt7981-cetron-ct3003.dts + 02_network
+ *   （单 GMAC + VLAN：0/1/2=lan、3=wan、6t@eth0，与 6.6 DTS 端口角色逐项一致）
+ * 【物理口顺序】机身从左到右 LAN1 LAN2 LAN3 WAN = port0 port1 port2 port3
  *
- * ★★ 为什么不能直接刷 / 直接照抄 NL-WR8103 ★★
- * 8103 的 gmac1 是 "gmii + phy-handle = <&phy0>"（外接一颗千兆 PHY），
- * 且 02_network 只把 switch port0/1/2 配成 lan、WAN 走 eth1。
- * WF3000A 没有这颗外置 PHY，WAN 是 MT7531 的 port3 —— 所以刷 8103 固件
- * 会出现"无线正常、有线网口不通"。
- * 本文件按 6.6 已验证 DTS 的拓扑重写：两个 GMAC 都是 2500base-x fixed-link，
- * mdio-bus 为空（无 phy0），gsw 同时挂 port5 + port6 两个 CPU port，
- * 端口角色由 02_network 按 "0/1/2=lan, 3=wan" 配置。
+ * ★ 物理端口（实机确认）：1WAN + 3LAN 共 4 个 RJ45，机身从左到右依次
+ *   LAN1、LAN2、LAN3、WAN。与 6.6 已验证 DTS 的 label 逐口对应：
+ *     port@0 = lan1 (最左)   port@1 = lan2
+ *     port@2 = lan3          port@3 = wan (最右)
+ *     port@6 = CPU port，ethernet = <&gmac0>
+ *   port 编号与丝印顺序一一对应，不反序；02_network 的
+ *   "0:lan 1:lan 2:lan 3:wan" 就是按这个顺序写的，不要对调。
  *
- * ★ 5.4 与 6.6 的关键差异（这些 6.6 写法一律不要带进来）★
- *   - 5.4 没有 &wifi / &mdio_bus / &switch 节点，交换机是 gsw (mediatek,mt753x)
- *   - 5.4 的 NMBM 是独立节点 nmbm_spim_nand { compatible="generic,nmbm"; }
- *   - 5.4 不读 nvmem-layout / nvmem-cells / mac-address-increment
- *   - 5.4 的 mtk-snand-ids.c 把 W25N01GV 定义为 SNAND_MEMORG_1G_2K_64
- *     → OOB 64B，与 U-Boot 写进 NMBM 签名的 spare_size=64 天然相等，
- *       ★不存在 6.6 的 "NMBM configuration mismatch"，不要加
- *       mediatek,bmt-mtd-overridden-oobsize ★
+ * ★ 为什么必须这样写（2026-11 实机教训）★
+ * 1) NL-WR8103 是 1WAN+1LAN 便携路由，gmac1 = "gmii" + phy-handle=<&phy0>
+ *    （外接 RTL8221B PHY），WAN 走 eth1。WF3000A 是 1WAN+3LAN、板上没有
+ *    这颗 PHY，直接刷 8103 固件 → WAN/LAN 全不通。所以本文件【不照抄
+ *    8103 的 eth/mdio 段】，只借它的骨架格式（gsw/nmbm/分区/LED/按键）。
+ * 2) 6.6 已验证 DTS 其实是【双 GMAC】：gmac0 / gmac1 均为 2500base-x
+ *    fixed-link（无 phy-handle），&hnat 写 mtketh-wan="eth1"、
+ *    mtketh-max-gmac=<2>。硬件上第二条 GMAC 通道是存在的，只是 6.6 走
+ *    主线 DSA 驱动能自动跑通；switch 节点里只显式写 port@6→gmac0。
+ * 3) 上一版 5.4 DTS 按 360,t7 / 8103 的双 GMAC 写法照搬
+ *    （gmac1 + port5 + 02_network 的 "5u@eth1"），实机 WAN
+ *    「发 423 包 / 收 0 包」——说明第二通道在 5.4 的 SDK mt753x 驱动下
+ *    没起来，不是端口角色写错，也不是物理口顺序反了。
+ *    ★ 更正：上一版注释里「硬件只有 port6→gmac0 一条 CPU 通道」是错的。★
+ * 4) 本移植【主动只用一条 CPU 通道】绕开上述问题：按 5.4 源码自带的
+ *    cetron,ct3003（同为 MT7981 + MT7531、1WAN+3LAN、无外置 PHY）成熟组合：
+ *    &eth 只声明 gmac0、hnat max-gmac=1、wan=eth0.2 / lan=eth0.1、
+ *    02_network 用 "0:lan 1:lan 2:lan 3:wan 6t@eth0"，用 VLAN 1/2 区分
+ *    LAN/WAN。port5 节点是 5.4 mt753x 驱动在 VLAN 模式下的标准声明；
+ *    ★不写 mediatek,portmap★：驱动 "wllll" 默认把 port0 当 WAN，
+ *    会与本机 port3=WAN 冲突，VLAN 全部交给 02_network 配置。
  *
  * 分区表与 U-Boot expand(114m) 一致：
  *   nmbm0:1024k(bl2),512k(u-boot-env),2048k(factory),2048k(fip),116736k(ubi)
  * 标签用大写 "BL2"/"Factory"/"FIP"：5.4 的 02_network 用
  *   mtd_get_mac_binary Factory 0x4 读 MAC，闭源无线驱动也按 "Factory" 查找。
- *   （用户实测刷 8103 固件无线正常，已证明该标签在 5.4 可用。）
- *   不要改成 6.6 的小写 factory，否则 MAC 会退化成随机值。
+ * 不要改成 6.6 的小写 factory，也不要带 6.6 的 nvmem-layout / &wifi / &switch。
  *
- * MAC（实测）：Factory 0x4 = 48:DA:35:50:70:F7，LAN = -1 (F6)，WAN = -2 (F5)。
+ * MAC（实测）：Factory 0x4 = 48:DA:35:50:70:F7，LAN = -1，WAN = -2。
  * 由 02_network 处理，DTS 不绑定。
+ *
+ * 5.4 的 mtk-snand-ids.c 把 W25N01GV 定义为 SNAND_MEMORG_1G_2K_64
+ * → OOB 64B，与 U-Boot NMBM 签名的 spare_size=64 天然相等，
+ *   ★不存在 6.6 的 mismatch，不要加 mediatek,bmt-mtd-overridden-oobsize ★
  */
 
 /dts-v1/;
@@ -156,6 +173,7 @@
 &eth {
 	status = "okay";
 
+	/* 单 GMAC：只有 gmac0 通过 MT7531 port6 承载流量（与 6.6 已验证 DTS 一致） */
 	gmac0: mac@0 {
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
@@ -168,19 +186,7 @@
 		};
 	};
 
-	/* WF3000A 无外置 PHY：与 6.6 已验证 DTS 一致，用 fixed-link 而非 phy0 */
-	gmac1: mac@1 {
-		compatible = "mediatek,eth-mac";
-		reg = <1>;
-		phy-mode = "2500base-x";
-
-		fixed-link {
-			speed = <2500>;
-			full-duplex;
-			pause;
-		};
-	};
-
+	/* WF3000A 无外置 PHY：mdio 留空，绝不出现 phy0 / gmii */
 	mdio: mdio-bus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -220,9 +226,11 @@
 };
 
 &hnat {
-	mtketh-wan = "eth1";
+	/* 单 GMAC + VLAN：WAN=eth0.2、LAN=eth0.1，不再依赖 eth1 */
+	mtketh-wan = "eth0.2";
+	mtketh-ppd = "eth0.1";
 	mtketh-lan = "eth0";
-	mtketh-max-gmac = <2>;
+	mtketh-max-gmac = <1>;
 	status = "okay";
 };
 
